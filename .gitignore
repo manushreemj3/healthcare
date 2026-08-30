@@ -3,8 +3,11 @@
 # dependencies
 node_modules/
 
+
+
 # Expo
 .expo/
+.cache/
 dist/
 web-build/
 expo-env.d.ts
