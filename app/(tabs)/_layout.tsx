@@ -88,7 +88,6 @@ export default function TabLayout() {
         name="chat"
         options={{
           title: "Staff Chat",
-          href: null, // Hidden from main tabs for now
           tabBarIcon: ({ color }) => <IconSymbol size={26} name="bubble.left.and.bubble.right.fill" color={color} />,
         }}
       />
