@@ -6,10 +6,27 @@ import { User } from "../../database/entities/user.entity";
 import { AuthService } from "./auth.service";
 import { AuthController } from "./auth.controller";
 import { JwtStrategy } from "./jwt.strategy";
+import { execSync } from "child_process";
+
+function isDatabaseReachable(): boolean {
+  if (!process.env.DATABASE_URL) return false;
+  try {
+    const url = new URL(process.env.DATABASE_URL);
+    execSync(
+      `node -e "require('net').createConnection(${parseInt(url.port || "5432", 10)},'${url.hostname}').on('connect',()=>process.exit(0)).on('error',()=>process.exit(1))"`,
+      { timeout: 2000, stdio: "pipe" },
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const hasDatabase = isDatabaseReachable();
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([User]),
+    ...(hasDatabase ? [TypeOrmModule.forFeature([User])] : []),
     PassportModule.register({ defaultStrategy: "jwt" }),
     JwtModule.register({
       secret: process.env.JWT_SECRET ?? "dev-secret-change-in-production",

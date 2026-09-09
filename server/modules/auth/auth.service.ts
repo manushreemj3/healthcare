@@ -1,8 +1,9 @@
-import { Injectable, Logger, UnauthorizedException, BadRequestException } from "@nestjs/common";
+import { Injectable, Logger, UnauthorizedException, BadRequestException, Optional } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
 import { InjectRepository } from "@nestjs/typeorm";
 import { Repository } from "typeorm";
-import { scryptSync, randomBytes, timingSafeEqual } from "crypto";
+import { scryptSync, randomBytes, timingSafeEqual, createHash } from "crypto";
+import { SignJWT } from "jose";
 import { User } from "../../database/entities";
 
 function hashPassword(password: string): string {
@@ -42,10 +43,13 @@ function normalizeRole(role: unknown): User["role"] {
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
+  private readonly localUsers = new Map<string, User>();
+  private nextLocalId = 1;
 
   constructor(
+    @Optional()
     @InjectRepository(User)
-    private readonly userRepo: Repository<User>,
+    private readonly userRepo: Repository<User> | undefined,
     private readonly jwtService: JwtService,
   ) {}
 
@@ -59,6 +63,14 @@ export class AuthService {
     phone?: string;
   }): Promise<{ accessToken: string; user: User }> {
     const normalizedPhone = data.phone ? normalizePhone(data.phone) : null;
+    if (!this.userRepo) {
+      const existing = this.localUsers.get(data.openId);
+      if (existing) throw new BadRequestException(`User with identifier "${data.openId}" already exists`);
+      const localUser = this.createLocalUser(data, normalizedPhone, data.password);
+      this.localUsers.set(localUser.openId, localUser);
+      return { accessToken: await this.generateJwt(localUser), user: localUser };
+    }
+
     let existing = await this.userRepo.findOne({
       where: [
         { openId: data.openId },
@@ -94,6 +106,20 @@ export class AuthService {
   async validateUserWithPassword(identifier: string, password?: string): Promise<User> {
     const normalizedIdentifier = identifier.trim();
     const phone = normalizePhone(normalizedIdentifier);
+    if (!this.userRepo) {
+      const user = [...this.localUsers.values()].find((candidate) =>
+        [candidate.openId, candidate.email, candidate.phone, candidate.name]
+          .filter(Boolean)
+          .some((value) => value!.toLowerCase() === identifier.trim().toLowerCase()),
+      );
+      if (!user) throw new UnauthorizedException("User not found. Register an account first.");
+      if (user.passwordHash && password && !verifyPassword(password.trim(), user.passwordHash)) {
+        throw new UnauthorizedException("Invalid password");
+      }
+      user.lastSignedIn = new Date();
+      return user;
+    }
+
     let user = await this.userRepo.findOne({
       where: [
         { openId: normalizedIdentifier },
@@ -148,7 +174,9 @@ export class AuthService {
   }
 
   async validateTokenPayload(payload: { sub: number; openId: string }): Promise<User> {
-    const user = await this.userRepo.findOne({ where: { id: payload.sub } });
+    const user = this.userRepo
+      ? await this.userRepo.findOne({ where: { id: payload.sub } })
+      : [...this.localUsers.values()].find((candidate) => candidate.id === payload.sub) ?? null;
     if (!user) {
       throw new UnauthorizedException("User not found");
     }
@@ -156,11 +184,84 @@ export class AuthService {
   }
 
   async getProfile(userId: number): Promise<User | null> {
+    if (!this.userRepo) return [...this.localUsers.values()].find((user) => user.id === userId) ?? null;
     return this.userRepo.findOne({ where: { id: userId } });
   }
 
   async updateRole(userId: number, role: any): Promise<User> {
+    if (!this.userRepo) {
+      const user = await this.getProfile(userId);
+      if (!user) throw new UnauthorizedException("User not found");
+      user.role = role;
+      return user;
+    }
     await this.userRepo.update(userId, { role });
     return this.userRepo.findOne({ where: { id: userId } }) as Promise<User>;
+  }
+
+  async getChatContacts(currentUser: User) {
+    const contacts = this.userRepo
+      ? await this.userRepo.find({
+          where: { hospitalId: currentUser.hospitalId },
+          order: { name: "ASC" },
+        })
+      : [...this.localUsers.values()];
+    const isDoctor = ["DOCTOR", "CHIEF_DOCTOR", "doctor", "chief_doc"].includes(currentUser.role);
+    return contacts
+      .filter((user) => user.id !== currentUser.id)
+      .filter((user) => {
+        const role = String(user.role);
+        return isDoctor
+          ? ["ASHA_WORKER", "RECEPTIONIST", "asha", "receptionist"].includes(role)
+          : ["DOCTOR", "CHIEF_DOCTOR", "doctor", "chief_doc"].includes(role);
+      })
+      .map((user) => ({
+        id: user.id,
+        name: user.name || user.openId,
+        role: user.role,
+      }));
+  }
+
+  async createSupabaseChatToken(user: User): Promise<string> {
+    const secret = process.env.SUPABASE_JWT_SECRET;
+    if (!secret) {
+      throw new UnauthorizedException("Supabase chat is not configured");
+    }
+
+    const digest = createHash("sha256").update(`healthcare-chat:${user.id}`).digest("hex");
+    const subject = `${digest.slice(0, 8)}-${digest.slice(8, 12)}-4${digest.slice(13, 16)}-${((parseInt(digest.slice(16, 18), 16) & 0x3f) | 0x80).toString(16)}${digest.slice(18, 20)}-${digest.slice(20, 32)}`;
+    const role = String(user.role).toLowerCase();
+
+    return new SignJWT({
+      role: "authenticated",
+      app_user_id: String(user.id),
+      app_role: role,
+    })
+      .setProtectedHeader({ alg: "HS256", typ: "JWT" })
+      .setSubject(subject)
+      .setAudience("authenticated")
+      .setIssuedAt()
+      .setExpirationTime("15m")
+      .sign(new TextEncoder().encode(secret));
+  }
+
+  private createLocalUser(data: { openId: string; name?: string; role?: any; hospitalId?: number; email?: string; phone?: string }, normalizedPhone: string | null, password?: string): User {
+    const now = new Date();
+    return {
+      id: this.nextLocalId++,
+      openId: data.openId,
+      name: data.name || data.openId,
+      email: data.email?.trim().toLowerCase() || null,
+      loginMethod: "local",
+      phone: normalizedPhone,
+      passwordHash: password ? hashPassword(password.trim()) : null,
+      role: normalizeRole(data.role),
+      hospitalId: data.hospitalId || 1,
+      createdAt: now,
+      updatedAt: now,
+      lastSignedIn: now,
+      hospital: null as never,
+      syncOperations: [],
+    };
   }
 }

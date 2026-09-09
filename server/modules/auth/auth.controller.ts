@@ -43,4 +43,16 @@ export class AuthController {
   async logout() {
     return { success: true };
   }
+
+  @UseGuards(JwtAuthGuard)
+  @Get("chat-token")
+  async chatToken(@Request() req: any) {
+    return { accessToken: await this.authService.createSupabaseChatToken(req.user) };
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Get("chat-contacts")
+  async chatContacts(@Request() req: any) {
+    return { userId: req.user.id, contacts: await this.authService.getChatContacts(req.user) };
+  }
 }

@@ -87,7 +87,8 @@ import { HospitalModule } from "./modules/hospital/hospital.module";
     ...(hasDb ? [TypeOrmModule.forFeature([TriageResult])] : []),
     ...(hasRedis ? [BullModule.forRoot({ redis: redisConfig! }), QueueModule] : []),
     ChatModule,
-    ...(hasDb ? [AuthModule, PatientModule, BedsModule, AuditModule, TeleconsultModule, FhirModule, HealthIdModule, HospitalModule] : []),
+    AuthModule,
+    ...(hasDb ? [PatientModule, BedsModule, AuditModule, TeleconsultModule, FhirModule, HealthIdModule, HospitalModule] : []),
   ],
 
   controllers: [

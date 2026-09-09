@@ -26,7 +26,7 @@ export const API_BASE_URL = env.apiBaseUrl;
 
 /**
  * Get the API base URL, deriving from current hostname if not set.
- * Metro runs on 8081, API server runs on 10000.
+ * Metro runs on 8081, API server runs on 3000.
  * URL pattern: https://PORT-sandboxid.region.domain
  */
 export function getApiBaseUrl(): string {
@@ -35,17 +35,17 @@ export function getApiBaseUrl(): string {
     return API_BASE_URL.replace(/\/$/, "");
   }
 
-  // On web, derive from current hostname by replacing port 8081 with 3000
+  // On web, derive from current hostname by replacing the Metro port with the API port.
   if (ReactNative.Platform.OS === "web" && typeof window !== "undefined" && window.location) {
     const { protocol, hostname, port } = window.location;
-    // Pattern: 8081-sandboxid.region.domain -> 10000-sandboxid.region.domain
-    const apiHostname = hostname.replace(/^8081-/, "10000-");
+    // Pattern: 8081-sandboxid.region.domain -> 3000-sandboxid.region.domain
+    const apiHostname = hostname.replace(/^8081-/, "3000-");
     if (apiHostname !== hostname) {
       return `${protocol}//${apiHostname}`;
     }
-    // Local dev / LAN: Metro serves the app on 8081, the API server runs on 10000
+    // Local dev / LAN: Metro serves the app on 8081, the API server runs on 3000.
     if (port === "8081") {
-      return `${protocol}//${hostname}:10000`;
+      return `${protocol}//${hostname}:3000`;
     }
   }
 

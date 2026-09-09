@@ -283,19 +283,24 @@ export async function createUserProfile(input: CreateUserInput): Promise<UserPro
   const baseUrl = getApiBaseUrl();
   let serverToken: string | undefined;
   if (baseUrl) {
-    const serverResponse = await fetch(`${baseUrl}/api/auth/register`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        openId: input.phone ? normalizePhone(input.phone) : id,
-        name: input.name.trim(),
-        password: input.passcode.trim(),
-        role: input.role,
-        hospitalId: Number(input.facilityId) || 1,
-        phone: input.phone ? normalizePhone(input.phone) : undefined,
-        email: input.email?.trim() || undefined,
-      }),
-    });
+    let serverResponse: Response;
+    try {
+      serverResponse = await fetch(`${baseUrl}/api/auth/register`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          openId: input.phone ? normalizePhone(input.phone) : id,
+          name: input.name.trim(),
+          password: input.passcode.trim(),
+          role: input.role,
+          hospitalId: Number(input.facilityId) || 1,
+          phone: input.phone ? normalizePhone(input.phone) : undefined,
+          email: input.email?.trim() || undefined,
+        }),
+      });
+    } catch {
+      throw new Error(`Cannot reach the healthcare server at ${baseUrl}. Start the API server or check EXPO_PUBLIC_API_BASE_URL.`);
+    }
 
     if (!serverResponse.ok) {
       const detail = await serverResponse.text().catch(() => "");

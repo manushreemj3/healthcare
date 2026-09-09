@@ -1,636 +1,81 @@
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
-import { useState, useRef, useCallback, useEffect } from "react";
-import {
-  FlatList,
-  KeyboardAvoidingView,
-  Platform,
-  Pressable,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from "react-native";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { FlatList, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useDoctorAuth } from "@/lib/health/DoctorAuthContext";
-import { useChatRealtime, type ChatTag } from "@/lib/health/useChatRealtime";
+import { useChatRealtime } from "@/lib/health/useChatRealtime";
+import { getApiBaseUrl } from "@/constants/oauth";
+import { getSessionToken } from "@/lib/_core/auth";
+import { authorizeSupabaseChat, supabase } from "@/lib/supabase";
 import { commonStyles } from "@/components/health/ui";
 
-// ─── Types ────────────────────────────────────────────────────────────────────
-
-type MessageTag = ChatTag;
-
-type Message = {
-  id: string;
-  senderId: string;
-  senderName: string;
-  senderRole?: string;
-  senderInitials: string;
-  text: string;
-  timestamp: number;
-  tag?: MessageTag;
-};
-
-const TAG_LABELS: Record<MessageTag, string> = {
-  urgent: "🔴 Urgent",
-  referral: "📋 Referral",
-  medicine: "💊 Medicine",
-  general: "💬 General",
-};
-
-const TAG_COLORS: Record<MessageTag, string> = {
-  urgent: "#B42318",
-  referral: "#087E7B",
-  medicine: "#7B4F9A",
-  general: "#4F6F7B",
-};
-
-const TAG_BG: Record<MessageTag, string> = {
-  urgent: "#FDECEC",
-  referral: "#E6F5F3",
-  medicine: "#F5EEFF",
-  general: "#EAF3F6",
-};
-
-// ─── Helper ───────────────────────────────────────────────────────────────────
-
-function formatTime(ts: number): string {
-  const d = new Date(ts);
-  const h = d.getHours();
-  const m = String(d.getMinutes()).padStart(2, "0");
-  return `${h > 12 ? h - 12 : h || 12}:${m} ${h >= 12 ? "PM" : "AM"}`;
-}
-
-function formatDateHeader(ts: number): string {
-  const d = new Date(ts);
-  return d.toLocaleDateString(undefined, {
-    weekday: "short",
-    month: "short",
-    day: "numeric",
-  });
-}
-
-function avatarColor(initials: string): string {
-  const colors = ["#087E7B", "#B66A00", "#7B4F9A", "#1B6B93", "#5A7B18", "#2E7D32"];
-  const charSum = initials.split("").reduce((acc, c) => acc + c.charCodeAt(0), 0);
-  return colors[charSum % colors.length];
-}
-
-// ─── Message bubble ───────────────────────────────────────────────────────────
-
-function MessageBubble({ msg, isMine }: { msg: Message; isMine: boolean }) {
-  return (
-    <View style={[styles.msgRow, isMine && styles.msgRowMine]}>
-      {!isMine && (
-        <View style={[styles.avatar, { backgroundColor: avatarColor(msg.senderInitials) }]}>
-          <Text style={styles.avatarText}>{msg.senderInitials}</Text>
-        </View>
-      )}
-      <View style={[styles.bubble, isMine && styles.bubbleMine]}>
-        {!isMine && (
-          <View style={styles.senderHeader}>
-            <Text style={styles.senderName}>{msg.senderName}</Text>
-            {msg.senderRole ? <Text style={styles.senderRole}> · {msg.senderRole}</Text> : null}
-          </View>
-        )}
-        {msg.tag && (
-          <View style={[styles.tagPill, { backgroundColor: TAG_BG[msg.tag] }]}>
-            <Text style={[styles.tagText, { color: TAG_COLORS[msg.tag] }]}>
-              {TAG_LABELS[msg.tag]}
-            </Text>
-          </View>
-        )}
-        <Text style={[styles.msgText, isMine && styles.msgTextMine]}>{msg.text}</Text>
-        <View style={styles.timeRow}>
-          <Text style={[styles.timeText, isMine && styles.timeTextMine]}>
-            {formatTime(msg.timestamp)}
-          </Text>
-          {isMine && <Text style={styles.checkmark}> </Text>}
-        </View>
-      </View>
-      {isMine && (
-        <View style={[styles.avatar, { backgroundColor: avatarColor(msg.senderInitials) }]}>
-          <Text style={styles.avatarText}>{msg.senderInitials}</Text>
-        </View>
-      )}
-    </View>
-  );
-}
-
-// ─── Main screen ──────────────────────────────────────────────────────────────
+type Contact = { id: number; name: string; role: string };
+const roleName = (role: string) => role.replaceAll("_", " ").toLowerCase().replace(/\b\w/g, (letter) => letter.toUpperCase());
+const timeName = (timestamp: number) => new Date(timestamp).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 
 export default function ChatScreen() {
-  const { doctor } = useDoctorAuth();
+  useDoctorAuth();
   const insets = useSafeAreaInsets();
   const listRef = useRef<FlatList>(null);
+  const [contacts, setContacts] = useState<Contact[]>([]);
+  const [currentUserId, setCurrentUserId] = useState<number | null>(null);
+  const [conversationId, setConversationId] = useState<string | null>(null);
+  const [selected, setSelected] = useState<Contact | null>(null);
+  const [input, setInput] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const { messages, loaded, connectionState, error: chatError, send } = useChatRealtime(conversationId, currentUserId);
 
-  const { messages, loaded, connectionState, send } = useChatRealtime("clinical-staff");
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      try {
+        const baseUrl = getApiBaseUrl();
+        const token = await getSessionToken();
+        if (!baseUrl || !token) throw new Error("Sign in with a connected account to use chat.");
+        const response = await fetch(`${baseUrl}/api/auth/chat-contacts`, { headers: { Authorization: `Bearer ${token}` } });
+        if (!response.ok) throw new Error("Unable to load healthcare contacts.");
+        const data = (await response.json()) as { userId: number; contacts: Contact[] };
+        if (!cancelled) { setCurrentUserId(data.userId); setContacts(data.contacts); }
+      } catch (cause) { if (!cancelled) setError(cause instanceof Error ? cause.message : "Unable to load contacts"); }
+      finally { if (!cancelled) setLoading(false); }
+    }
+    void load();
+    return () => { cancelled = true; };
+  }, []);
 
-  const [inputText, setInputText] = useState("");
-  const [selectedTag, setSelectedTag] = useState<MessageTag | undefined>(undefined);
-  const [showTagPicker, setShowTagPicker] = useState(false);
+  const openConversation = useCallback(async (contact: Contact) => {
+    setBusy(true); setError(null);
+    try {
+      await authorizeSupabaseChat();
+      const { data, error: rpcError } = await supabase.rpc("get_or_create_direct_conversation", { target_user_id: contact.id });
+      if (rpcError) throw rpcError;
+      setSelected(contact); setConversationId(data as string);
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "Unable to open conversation"); }
+    finally { setBusy(false); }
+  }, []);
 
-  const isLive = connectionState === "open" || connectionState === "connecting";
+  const sendMessage = useCallback(async () => {
+    if (!input.trim() || busy || !conversationId) return;
+    setBusy(true); setError(null);
+    try { await send(input); setInput(""); setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 50); }
+    catch (cause) { setError(cause instanceof Error ? cause.message : "Message could not be sent"); }
+    finally { setBusy(false); }
+  }, [busy, conversationId, input, send]);
 
-  const myId = doctor?.id ?? doctor?.doctorId ?? "doc-active";
-  const myName = doctor?.name ?? "Attending Healthcare Worker";
-  const myRole = doctor?.specialization ?? "Medical Staff";
-  const myInitials = myName
-    .replace(/^Dr\.\s*/i, "")
-    .trim()
-    .slice(0, 2)
-    .toUpperCase() || "HW";
-
-  const sendMessage = useCallback(() => {
-    const text = inputText.trim();
-    if (!text) return;
-    void send({ text, tag: selectedTag });
-    setInputText("");
-    setSelectedTag(undefined);
-    setShowTagPicker(false);
-
-    setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 80);
-  }, [inputText, selectedTag, send]);
-
-  const TAGS: MessageTag[] = ["urgent", "referral", "medicine", "general"];
-
-  return (
-    <KeyboardAvoidingView
-      style={commonStyles.screen}
-      behavior={Platform.OS === "ios" ? "padding" : "height"}
-      keyboardVerticalOffset={Platform.OS === "ios" ? 90 : 0}
-    >
-      {/* Header */}
-      <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
-        <View style={styles.headerLeft}>
-          <View style={styles.channelDot} />
-          <View>
-            <Text style={styles.headerTitle}>Clinical Staff Channel</Text>
-            <Text style={styles.headerSub}>
-              {doctor?.facilityName || "Nandipur Primary Health Centre"} · Team Chat
-            </Text>
-          </View>
-        </View>
-        <View style={styles.onlinePill}>
-          <View style={[styles.onlineDot, !isLive && styles.onlineDotOffline]} />
-          <Text style={styles.onlineText}>
-            {connectionState === "open" ? "Live" : connectionState === "connecting" || connectionState === "reconnecting" ? "Connecting" : "Offline"}
-          </Text>
-        </View>
-      </View>
-
-      {/* Messages List */}
-      <FlatList
-        ref={listRef}
-        data={messages}
-        keyExtractor={(item) => item.id}
-        contentContainerStyle={[styles.list, messages.length === 0 && styles.listEmpty]}
-        onContentSizeChange={() => {
-          if (messages.length > 0) {
-            listRef.current?.scrollToEnd({ animated: false });
-          }
-        }}
-        renderItem={({ item }) => (
-          <MessageBubble msg={item} isMine={item.senderId === myId} />
-        )}
-        ListEmptyComponent={
-          loaded ? (
-            <View style={styles.emptyState}>
-              <View style={styles.emptyIconCircle}>
-                <MaterialIcons name="forum" size={38} color="#087E7B" />
-              </View>
-              <Text style={styles.emptyTitle}>No messages yet</Text>
-              <Text style={styles.emptyBody}>
-                Start the communication thread. Healthcare workers and staff can exchange live patient notes, shift updates, and clinical alerts.
-              </Text>
-              <View style={styles.emptyHint}>
-                <MaterialIcons name="verified-user" size={14} color="#087E7B" />
-                <Text style={styles.emptyHintText}>
-                  All conversation history is securely recorded and persisted.
-                </Text>
-              </View>
-            </View>
-          ) : null
-        }
-      />
-
-      {/* Tag picker (slides up when label icon tapped) */}
-      {showTagPicker && (
-        <View style={styles.tagPicker}>
-          <Text style={styles.tagPickerLabel}>Tag this clinical note:</Text>
-          <View style={styles.tagRow}>
-            {TAGS.map((tag) => {
-              const active = selectedTag === tag;
-              return (
-                <Pressable
-                  key={tag}
-                  onPress={() => setSelectedTag(active ? undefined : tag)}
-                  style={[
-                    styles.tagOption,
-                    {
-                      backgroundColor: active ? TAG_BG[tag] : "#F2F6F4",
-                      borderColor: active ? TAG_COLORS[tag] : "#D5E1DD",
-                    },
-                  ]}
-                >
-                  <Text
-                    style={[
-                      styles.tagOptionText,
-                      active && { color: TAG_COLORS[tag], fontWeight: "900" },
-                    ]}
-                  >
-                    {TAG_LABELS[tag]}
-                  </Text>
-                </Pressable>
-              );
-            })}
-          </View>
-        </View>
-      )}
-
-      {/* Input bar */}
-      <View style={[styles.inputBar, { paddingBottom: Math.max(insets.bottom, 12) }]}>
-        <Pressable
-          onPress={() => setShowTagPicker((v) => !v)}
-          style={[styles.iconBtn, showTagPicker && styles.iconBtnActive]}
-          accessibilityLabel="Tag message"
-        >
-          <MaterialIcons
-            name={showTagPicker ? "close" : "label-outline"}
-            size={22}
-            color={showTagPicker ? "#087E7B" : "#6C817C"}
-          />
-        </Pressable>
-
-        {selectedTag && (
-          <View style={[styles.activeTag, { backgroundColor: TAG_BG[selectedTag] }]}>
-            <Text style={[styles.activeTagText, { color: TAG_COLORS[selectedTag] }]}>
-              {TAG_LABELS[selectedTag]}
-            </Text>
-          </View>
-        )}
-
-        <TextInput
-          value={inputText}
-          onChangeText={setInputText}
-          placeholder="Type a clinical note or message..."
-          placeholderTextColor="#8CA19B"
-          multiline
-          style={styles.textInput}
-          returnKeyType="send"
-          onSubmitEditing={sendMessage}
-          blurOnSubmit={false}
-        />
-
-        <Pressable
-          onPress={sendMessage}
-          disabled={!inputText.trim()}
-          style={({ pressed }) => [
-            styles.sendBtn,
-            { opacity: !inputText.trim() ? 0.35 : pressed ? 0.75 : 1 },
-          ]}
-          accessibilityLabel="Send message"
-        >
-          <MaterialIcons name="send" size={20} color="#FFFFFF" />
-        </Pressable>
-      </View>
-    </KeyboardAvoidingView>
-  );
+  const activeError = error || chatError;
+  return <KeyboardAvoidingView style={commonStyles.screen} behavior={Platform.OS === "ios" ? "padding" : "height"} keyboardVerticalOffset={Platform.OS === "ios" ? 90 : 0}>
+    <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
+      <View><Text style={styles.title}>{selected?.name || "Chat"}</Text><Text style={styles.subtitle}>{selected ? `${roleName(selected.role)} · ${connectionState === "open" ? "Online" : "Connecting"}` : "Private clinical conversations"}</Text></View>
+      {selected ? <Pressable onPress={() => { setSelected(null); setConversationId(null); }} accessibilityLabel="Back to contacts"><MaterialIcons name="arrow-back" size={24} color="#087E7B" /></Pressable> : null}
+    </View>
+    {!selected ? <FlatList data={contacts} keyExtractor={(item) => String(item.id)} contentContainerStyle={styles.contacts} ListHeaderComponent={<Text style={styles.section}>Choose a healthcare contact</Text>} ListEmptyComponent={<Text style={styles.muted}>{loading ? "Loading contacts..." : "No authorized contacts found at your facility."}</Text>} renderItem={({ item }) => <Pressable style={styles.contact} onPress={() => void openConversation(item)} disabled={busy}><View style={styles.avatar}><Text style={styles.avatarText}>{item.name.slice(0, 2).toUpperCase()}</Text></View><View style={styles.contactText}><Text style={styles.contactName}>{item.name}</Text><Text style={styles.contactRole}>{roleName(item.role)}</Text></View><MaterialIcons name="chevron-right" size={24} color="#8CA19B" /></Pressable>} /> : <><FlatList ref={listRef} data={messages} keyExtractor={(item) => item.id} contentContainerStyle={[styles.messages, !messages.length && styles.empty]} onContentSizeChange={() => messages.length > 0 && listRef.current?.scrollToEnd({ animated: false })} ListEmptyComponent={<Text style={styles.muted}>{loaded ? "No messages yet. Start the conversation." : "Loading messages..."}</Text>} renderItem={({ item }) => { const mine = item.senderId === String(currentUserId); return <View style={[styles.row, mine && styles.rowMine]}><View style={[styles.bubble, mine && styles.bubbleMine]}><Text style={[styles.message, mine && styles.messageMine]}>{item.text}</Text><Text style={[styles.time, mine && styles.timeMine]}>{timeName(item.timestamp)}</Text></View></View>; }} /><View style={[styles.inputBar, { paddingBottom: Math.max(insets.bottom, 12) }]}><TextInput value={input} onChangeText={setInput} placeholder="Type a message..." placeholderTextColor="#8CA19B" multiline style={styles.input} editable={!busy} onSubmitEditing={() => { if (Platform.OS === "web") void sendMessage(); }} blurOnSubmit={false} /><Pressable onPress={() => void sendMessage()} disabled={!input.trim() || busy} style={[styles.send, (!input.trim() || busy) && styles.disabled]} accessibilityLabel="Send message"><MaterialIcons name="send" size={20} color="#FFFFFF" /></Pressable></View></>}
+    {activeError ? <Text style={styles.error}>{activeError}</Text> : null}
+  </KeyboardAvoidingView>;
 }
 
-// ─── Styles ───────────────────────────────────────────────────────────────────
-
 const styles = StyleSheet.create({
-  header: {
-    backgroundColor: "#FFFFFF",
-    borderBottomColor: "#E4EDE9",
-    borderBottomWidth: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 16,
-    paddingBottom: 12,
-    ...Platform.select({
-      web: {
-        boxShadow: "0 2px 6px rgba(24, 51, 47, 0.06)",
-      } as any,
-      default: {
-        elevation: 2,
-        shadowColor: "#18332F",
-        shadowOpacity: 0.06,
-        shadowRadius: 6,
-        shadowOffset: { width: 0, height: 2 },
-      },
-    }),
-  },
-  headerLeft: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-  },
-  channelDot: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-    backgroundColor: "#087E7B",
-  },
-  headerTitle: {
-    color: "#18332F",
-    fontSize: 17,
-    fontWeight: "900",
-  },
-  headerSub: {
-    color: "#6C817C",
-    fontSize: 11,
-    fontWeight: "700",
-    marginTop: 1,
-  },
-  onlinePill: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 5,
-    backgroundColor: "#E6F5F3",
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: "#C0E4E2",
-  },
-  onlineDot: {
-    width: 7,
-    height: 7,
-    borderRadius: 4,
-    backgroundColor: "#12A875",
-  },
-  onlineDotOffline: {
-    backgroundColor: "#B42318",
-  },
-  onlineText: {
-    color: "#087E7B",
-    fontSize: 11,
-    fontWeight: "800",
-  },
-  list: {
-    padding: 14,
-    paddingBottom: 16,
-    gap: 8,
-  },
-  listEmpty: {
-    flexGrow: 1,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  emptyState: {
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: 32,
-    paddingVertical: 40,
-    maxWidth: 420,
-  },
-  emptyIconCircle: {
-    width: 76,
-    height: 76,
-    borderRadius: 38,
-    backgroundColor: "#E6F5F3",
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 16,
-    borderWidth: 1.5,
-    borderColor: "#C0E4E2",
-  },
-  emptyTitle: {
-    color: "#18332F",
-    fontSize: 19,
-    fontWeight: "900",
-    marginBottom: 8,
-    textAlign: "center",
-  },
-  emptyBody: {
-    color: "#54716B",
-    fontSize: 13,
-    lineHeight: 20,
-    textAlign: "center",
-    marginBottom: 20,
-  },
-  emptyHint: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    backgroundColor: "#F0F6F4",
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: "#D5E1DD",
-  },
-  emptyHintText: {
-    color: "#54716B",
-    fontSize: 11,
-    fontWeight: "700",
-  },
-  msgRow: {
-    flexDirection: "row",
-    alignItems: "flex-end",
-    gap: 8,
-    marginBottom: 4,
-  },
-  msgRowMine: {
-    justifyContent: "flex-end",
-  },
-  avatar: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    alignItems: "center",
-    justifyContent: "center",
-    flexShrink: 0,
-  },
-  avatarText: {
-    color: "#FFFFFF",
-    fontSize: 12,
-    fontWeight: "900",
-  },
-  bubble: {
-    maxWidth: "78%",
-    backgroundColor: "#FFFFFF",
-    borderRadius: 16,
-    borderBottomLeftLeftRadius: undefined,
-    borderBottomLeftRadius: 4,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderWidth: 1,
-    borderColor: "#E4EDE9",
-    ...Platform.select({
-      web: {
-        boxShadow: "0 1px 4px rgba(24, 51, 47, 0.04)",
-      } as any,
-      default: {
-        shadowColor: "#18332F",
-        shadowOpacity: 0.04,
-        shadowRadius: 4,
-        shadowOffset: { width: 0, height: 1 },
-        elevation: 1,
-      },
-    }),
-  },
-  bubbleMine: {
-    backgroundColor: "#087E7B",
-    borderRadius: 16,
-    borderBottomRightRadius: 4,
-    borderColor: "#065A57",
-  },
-  senderHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 4,
-    flexWrap: "wrap",
-  },
-  senderName: {
-    color: "#087E7B",
-    fontSize: 12,
-    fontWeight: "900",
-  },
-  senderRole: {
-    color: "#6C817C",
-    fontSize: 11,
-    fontWeight: "600",
-  },
-  tagPill: {
-    alignSelf: "flex-start",
-    borderRadius: 6,
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    marginBottom: 6,
-  },
-  tagText: {
-    fontSize: 10,
-    fontWeight: "900",
-  },
-  msgText: {
-    color: "#18332F",
-    fontSize: 14,
-    lineHeight: 20,
-  },
-  msgTextMine: {
-    color: "#FFFFFF",
-  },
-  timeRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    alignSelf: "flex-end",
-    marginTop: 4,
-    gap: 2,
-  },
-  timeText: {
-    color: "#8CA19B",
-    fontSize: 10,
-  },
-  timeTextMine: {
-    color: "rgba(255,255,255,0.7)",
-  },
-  checkmark: {
-    color: "rgba(255,255,255,0.85)",
-    fontSize: 10,
-  },
-  tagPicker: {
-    backgroundColor: "#FFFFFF",
-    borderTopColor: "#E4EDE9",
-    borderTopWidth: 1,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-  },
-  tagPickerLabel: {
-    color: "#6C817C",
-    fontSize: 11,
-    fontWeight: "800",
-    marginBottom: 8,
-    textTransform: "uppercase",
-    letterSpacing: 0.4,
-  },
-  tagRow: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 7,
-  },
-  tagOption: {
-    borderRadius: 8,
-    borderWidth: 1,
-    paddingHorizontal: 11,
-    paddingVertical: 7,
-  },
-  tagOptionText: {
-    color: "#6C817C",
-    fontSize: 12,
-    fontWeight: "800",
-  },
-  inputBar: {
-    backgroundColor: "#FFFFFF",
-    borderTopColor: "#E4EDE9",
-    borderTopWidth: 1,
-    flexDirection: "row",
-    alignItems: "flex-end",
-    paddingHorizontal: 10,
-    paddingTop: 10,
-    gap: 8,
-  },
-  iconBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 10,
-    backgroundColor: "#F2F6F4",
-    alignItems: "center",
-    justifyContent: "center",
-    borderWidth: 1,
-    borderColor: "#D5E1DD",
-    flexShrink: 0,
-  },
-  iconBtnActive: {
-    backgroundColor: "#E6F5F3",
-    borderColor: "#087E7B",
-  },
-  activeTag: {
-    borderRadius: 6,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    flexShrink: 0,
-    alignSelf: "center",
-  },
-  activeTagText: {
-    fontSize: 11,
-    fontWeight: "900",
-  },
-  textInput: {
-    flex: 1,
-    backgroundColor: "#F7FAF9",
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: "#D5E1DD",
-    paddingHorizontal: 13,
-    paddingTop: 10,
-    paddingBottom: 10,
-    color: "#18332F",
-    fontSize: 14,
-    maxHeight: 110,
-    lineHeight: 20,
-  },
-  sendBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: "#087E7B",
-    alignItems: "center",
-    justifyContent: "center",
-    flexShrink: 0,
-    ...Platform.select({
-      web: {
-        boxShadow: "0 3px 6px rgba(8, 126, 123, 0.3)",
-      } as any,
-      default: {
-        shadowColor: "#087E7B",
-        shadowOpacity: 0.3,
-        shadowRadius: 6,
-        shadowOffset: { width: 0, height: 3 },
-        elevation: 3,
-      },
-    }),
-  },
+  header: { backgroundColor: "#FFFFFF", borderBottomColor: "#E4EDE9", borderBottomWidth: 1, paddingHorizontal: 18, paddingBottom: 14, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  title: { color: "#18332F", fontSize: 19, fontWeight: "900" }, subtitle: { color: "#6C817C", fontSize: 12, fontWeight: "700", marginTop: 3 }, section: { color: "#18332F", fontSize: 16, fontWeight: "900", marginBottom: 5 }, contacts: { padding: 16, gap: 10 }, contact: { backgroundColor: "#FFFFFF", borderColor: "#E4EDE9", borderWidth: 1, padding: 13, flexDirection: "row", alignItems: "center", borderRadius: 12 }, avatar: { width: 42, height: 42, borderRadius: 21, backgroundColor: "#087E7B", alignItems: "center", justifyContent: "center" }, avatarText: { color: "#FFFFFF", fontWeight: "900" }, contactText: { flex: 1, marginLeft: 12 }, contactName: { color: "#18332F", fontSize: 15, fontWeight: "800" }, contactRole: { color: "#6C817C", fontSize: 12, marginTop: 3 }, messages: { padding: 14, gap: 8 }, empty: { flexGrow: 1, justifyContent: "center" }, row: { alignItems: "flex-start" }, rowMine: { alignItems: "flex-end" }, bubble: { maxWidth: "80%", backgroundColor: "#FFFFFF", borderColor: "#E4EDE9", borderWidth: 1, borderRadius: 15, borderBottomLeftRadius: 4, paddingHorizontal: 13, paddingVertical: 9 }, bubbleMine: { backgroundColor: "#087E7B", borderColor: "#087E7B", borderBottomLeftRadius: 15, borderBottomRightRadius: 4 }, message: { color: "#18332F", fontSize: 14, lineHeight: 20 }, messageMine: { color: "#FFFFFF" }, time: { color: "#6C817C", fontSize: 10, alignSelf: "flex-end", marginTop: 4 }, timeMine: { color: "#D5F1ED" }, inputBar: { backgroundColor: "#FFFFFF", borderTopColor: "#E4EDE9", borderTopWidth: 1, paddingTop: 10, paddingHorizontal: 12, flexDirection: "row", alignItems: "flex-end", gap: 8 }, input: { flex: 1, maxHeight: 110, backgroundColor: "#F2F6F4", borderRadius: 12, paddingHorizontal: 13, paddingVertical: 10, color: "#18332F", fontSize: 14 }, send: { width: 42, height: 42, borderRadius: 21, backgroundColor: "#087E7B", alignItems: "center", justifyContent: "center" }, disabled: { opacity: 0.35 }, muted: { color: "#6C817C", textAlign: "center", padding: 20 }, error: { color: "#B42318", backgroundColor: "#FDECEC", padding: 10, textAlign: "center", fontSize: 12 },
 });
