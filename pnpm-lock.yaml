@@ -68,6 +68,27 @@ importers:
       '@trpc/server':
         specifier: 11.7.2
         version: 11.7.2(typescript@5.9.3)
+      '@types/bcrypt':
+        specifier: ^5.0.2
+        version: 5.0.2
+      '@types/cookie':
+        specifier: ^0.6.0
+        version: 0.6.0
+      '@types/express':
+        specifier: ^4.17.25
+        version: 4.17.25
+      '@types/node':
+        specifier: ^22.19.3
+        version: 22.20.1
+      '@types/passport-jwt':
+        specifier: ^4.0.1
+        version: 4.0.1
+      '@types/pg':
+        specifier: ^8.23.1
+        version: 8.23.1
+      '@types/qrcode':
+        specifier: ^1.5.6
+        version: 1.5.6
       axios:
         specifier: ^1.13.2
         version: 1.20.0
@@ -225,27 +246,6 @@ importers:
       '@nestjs/cli':
         specifier: ^11.0.24
         version: 11.0.24(@types/node@22.20.1)(esbuild@0.25.12)(lightningcss@1.33.0)(postcss@8.5.26)(prettier@3.9.6)
-      '@types/bcrypt':
-        specifier: ^5.0.2
-        version: 5.0.2
-      '@types/cookie':
-        specifier: ^0.6.0
-        version: 0.6.0
-      '@types/express':
-        specifier: ^4.17.25
-        version: 4.17.25
-      '@types/node':
-        specifier: ^22.19.3
-        version: 22.20.1
-      '@types/passport-jwt':
-        specifier: ^4.0.1
-        version: 4.0.1
-      '@types/pg':
-        specifier: ^8.23.1
-        version: 8.23.1
-      '@types/qrcode':
-        specifier: ^1.5.6
-        version: 1.5.6
       '@types/react':
         specifier: ~19.1.17
         version: 19.1.17
