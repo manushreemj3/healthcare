@@ -17,7 +17,6 @@ import {
   TouchableOpacity,
   StyleSheet,
   Switch,
-  Platform,
 } from "react-native";
 import { useHealth } from "@/lib/health/store";
 

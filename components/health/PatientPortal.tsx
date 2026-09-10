@@ -1,7 +1,6 @@
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 import { useState, useMemo } from "react";
 import {
-  ActivityIndicator,
   Alert,
   Modal,
   Platform,
@@ -15,15 +14,11 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useHealth } from "@/lib/health/store";
 import { useUserAuth } from "@/lib/health/DoctorAuthContext";
-import { commonStyles } from "@/components/health/ui";
 import type {
-  Appointment,
   HospitalFacility,
   HospitalDoctor,
   Medicine,
-  MedicineOrder,
   Patient,
-  QueueEntry,
 } from "@/lib/health/types";
 
 type PatientPortalTab = "queue" | "records" | "appointments" | "medicines";
@@ -95,7 +90,7 @@ export function PatientPortal() {
   const [showBookModal, setShowBookModal] = useState(false);
   const [selectedHospital, setSelectedHospital] = useState<HospitalFacility>(state.hospitals[0] || {} as any);
   const [selectedDoctor, setSelectedDoctor] = useState<HospitalDoctor | null>(null);
-  const [appointmentDate, setAppointmentDate] = useState(
+  const [appointmentDate] = useState(
     new Date(Date.now() + 86400000).toISOString().split("T")[0],
   );
   const [appointmentSlot, setAppointmentSlot] = useState("10:30 AM");
@@ -105,7 +100,6 @@ export function PatientPortal() {
   const [selectedSymptoms, setSelectedSymptoms] = useState<string[]>([]);
   const [emergencyNotes, setEmergencyNotes] = useState("");
 
-  const [hospitalSearch, setHospitalSearch] = useState("");
   const [showOrderModal, setShowOrderModal] = useState(false);
   const [selectedMedicine, setSelectedMedicine] = useState<Medicine | null>(null);
   const [orderQuantity, setOrderQuantity] = useState("30");

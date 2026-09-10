@@ -1,4 +1,4 @@
-import { Controller, Post, Body, Get, UseGuards, Request, Logger, UnauthorizedException } from "@nestjs/common";
+import { Controller, Post, Body, Get, UseGuards, Request, Logger, UnauthorizedException, Query } from "@nestjs/common";
 import { AuthService } from "./auth.service";
 import { JwtAuthGuard } from "./jwt-auth.guard";
 
@@ -52,7 +52,14 @@ export class AuthController {
 
   @UseGuards(JwtAuthGuard)
   @Get("chat-contacts")
-  async chatContacts(@Request() req: any) {
-    return { userId: req.user.id, contacts: await this.authService.getChatContacts(req.user) };
+  async chatContacts(@Request() req: any, @Query("facilityId") facilityId?: string) {
+    const numericFacilityId = facilityId ? parseInt(facilityId, 10) : undefined;
+    return {
+      userId: req.user.id,
+      contacts: await this.authService.getChatContacts(
+        req.user,
+        numericFacilityId && !isNaN(numericFacilityId) ? numericFacilityId : undefined,
+      ),
+    };
   }
 }

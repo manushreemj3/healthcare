@@ -219,7 +219,7 @@ export function NearbyHospitalsScreen({ currentFacilityId, maxDistance = 15 }: N
       } else {
         Alert.alert("Error", "Cannot open phone dialer");
       }
-    } catch (error) {
+    } catch {
       Alert.alert("Error", "Failed to open phone dialer");
     } finally {
       setCallInProgress(false);

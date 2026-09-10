@@ -200,17 +200,32 @@ export class AuthService {
     return this.userRepo.findOne({ where: { id: userId } }) as Promise<User>;
   }
 
-  async getChatContacts(currentUser: User) {
+  async getChatContacts(currentUser: User, facilityId?: number) {
+    const targetHospitalId = facilityId || currentUser.hospitalId || 1;
     const contacts = this.userRepo
       ? await this.userRepo.find({
-          where: { hospitalId: currentUser.hospitalId },
+          where: { hospitalId: targetHospitalId },
           order: { name: "ASC" },
         })
+<<<<<<< HEAD
       : [...this.localUsers.values()].filter((user) => user.hospitalId === currentUser.hospitalId);
 
     return contacts
       .filter((user) => user.id !== currentUser.id)
       .filter((user) => !["PATIENT"].includes(String(user.role)))
+=======
+      : [...this.localUsers.values()].filter((u) => (u.hospitalId || 1) === targetHospitalId);
+
+    const doctorRoles = ["DOCTOR", "CHIEF_DOCTOR", "doctor", "chief_doc"];
+    const staffRoles = ["ASHA_WORKER", "RECEPTIONIST", "asha_worker", "asha", "receptionist"];
+
+    return contacts
+      .filter((user) => user.id !== currentUser.id)
+      .filter((user) => {
+        const role = String(user.role);
+        return doctorRoles.includes(role) || staffRoles.includes(role);
+      })
+>>>>>>> 3cca896 (Fix staff chat and database integration)
       .map((user) => ({
         id: user.id,
         name: user.name || user.openId,

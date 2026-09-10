@@ -25,7 +25,7 @@ type Props = {
 // ──────────────────────────────────────────────────────────────────────────────
 
 export function BedManagementScreen({ facilityId }: Props) {
-  const { state, getFacilityUnits, getBedsByUnit, addWard, occupyBed, releaseBed } = useHealth();
+  const { getFacilityUnits, getBedsByUnit, addWard, occupyBed, releaseBed } = useHealth();
   const { role } = useUserAuth();
   const isChief = role === "chief_doctor";
   const canUpdateBeds = role === "asha_worker" || role === "receptionist" || role === "doctor" || role === "chief_doctor";

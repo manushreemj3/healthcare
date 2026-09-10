@@ -5,7 +5,6 @@ import { SyncPill, commonStyles } from "@/components/health/ui";
 import { useHealth } from "@/lib/health/store";
 import { useUserAuth } from "@/lib/health/DoctorAuthContext";
 import type { Medicine } from "@/lib/health/types";
-import { trpc } from "@/lib/trpc";
 
 export default function MedicinesScreen() {
   const { state, t, recordInventoryTransaction, addMedicine } = useHealth();

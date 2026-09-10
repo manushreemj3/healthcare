@@ -14,7 +14,7 @@ function isDatabaseReachable(): boolean {
     const url = new URL(process.env.DATABASE_URL);
     execSync(
       `node -e "require('net').createConnection(${parseInt(url.port || "5432", 10)},'${url.hostname}').on('connect',()=>process.exit(0)).on('error',()=>process.exit(1))"`,
-      { timeout: 2000, stdio: "pipe" },
+      { timeout: 5000, stdio: "pipe" },
     );
     return true;
   } catch {

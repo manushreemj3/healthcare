@@ -1,31 +1,9 @@
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 import { Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useQueueRealtime, type QueueRealtimeEvent } from "@/lib/health/useQueueRealtime";
-import { portalFetch, portalLogin, getPortalToken, clearPortalToken } from "@/lib/health/portalAuth";
+import { portalLogin, getPortalToken, clearPortalToken } from "@/lib/health/portalAuth";
 import type { Priority, VaccinationRecord } from "@/lib/health/types";
 import { VACCINES } from "@/lib/health/types";
-
-type ServerQueueRow = Record<string, unknown> & {
-  patientId: string | number;
-  serviceType?: string;
-  careCategory?: string;
-  priorityReason?: string;
-  status?: string;
-  enteredAt?: number;
-};
-
-type ServerPatient = {
-  id: number;
-  name: string;
-  localId: string;
-  careCategory?: string;
-  gender?: string;
-  age?: number;
-  contactPhone?: string;
-  allergies?: string;
-  currentMedicines?: string;
-};
 
 const priorityTone: Record<Priority, { bg: string; fg: string }> = {
   emergency: { bg: "#FDECEC", fg: "#B42318" },

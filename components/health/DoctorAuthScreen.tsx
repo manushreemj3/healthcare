@@ -27,7 +27,7 @@ const SPECIALIZATIONS: DoctorSpecialization[] = [
 ];
 
 export function DoctorAuthScreen() {
-  const { signIn, signUp, registeredDoctors } = useDoctorAuth();
+  const { signIn, signUp } = useDoctorAuth();
   const passwordInputRef = useRef<import("react-native").TextInput>(null);
   const [tab, setTab] = useState<"signin" | "signup">("signin");
   const [busy, setBusy] = useState(false);

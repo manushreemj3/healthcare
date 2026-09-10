@@ -1,5 +1,5 @@
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useCallback } from "react";
 import {
   ActivityIndicator,
   Image,

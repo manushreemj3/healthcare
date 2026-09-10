@@ -1,5 +1,6 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { getApiBaseUrl } from "@/constants/oauth";
+import { getApiBaseUrl, SESSION_TOKEN_KEY } from "@/constants/oauth";
+import { setSessionToken, removeSessionToken } from "@/lib/_core/auth";
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Types
@@ -115,6 +116,7 @@ function syncPortalToken(token: string) {
   try {
     if (typeof window !== "undefined" && window.localStorage) {
       window.localStorage.setItem(PORTAL_TOKEN_KEY, token);
+      window.localStorage.setItem(SESSION_TOKEN_KEY, token);
     }
   } catch {
     /* noop */
@@ -125,6 +127,7 @@ function removePortalToken() {
   try {
     if (typeof window !== "undefined" && window.localStorage) {
       window.localStorage.removeItem(PORTAL_TOKEN_KEY);
+      window.localStorage.removeItem(SESSION_TOKEN_KEY);
     }
   } catch {
     /* noop */
@@ -170,6 +173,65 @@ export async function saveRegisteredUser(profile: UserProfile): Promise<void> {
   }
 }
 
+export async function ensureServerSession(
+  profile: UserProfile,
+  passcode?: string,
+): Promise<string | null> {
+  const baseUrl = getApiBaseUrl();
+  if (!baseUrl) return null;
+
+  const identifier = profile.phone ? normalizePhone(profile.phone) : profile.id;
+  const password = passcode || "staff_auth_default_pin_1234";
+
+  // 1. Try login first
+  try {
+    const loginRes = await fetch(`${baseUrl}/api/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ identifier, password }),
+    });
+    if (loginRes.ok) {
+      const data = await loginRes.json();
+      if (data.accessToken) {
+        syncPortalToken(data.accessToken);
+        await setSessionToken(data.accessToken);
+        return data.accessToken;
+      }
+    }
+  } catch {
+    /* server offline or register needed */
+  }
+
+  // 2. If login failed because user is not registered on server DB yet, register now
+  try {
+    const regRes = await fetch(`${baseUrl}/api/auth/register`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        openId: identifier,
+        name: profile.name,
+        password,
+        role: profile.role,
+        hospitalId: Number(profile.facilityId) || 1,
+        phone: profile.phone ? normalizePhone(profile.phone) : undefined,
+        email: profile.email || undefined,
+      }),
+    });
+    if (regRes.ok) {
+      const regData = await regRes.json();
+      if (regData.accessToken) {
+        syncPortalToken(regData.accessToken);
+        await setSessionToken(regData.accessToken);
+        return regData.accessToken;
+      }
+    }
+  } catch (err) {
+    console.warn("Could not register user session on server:", err);
+  }
+
+  return null;
+}
+
 export async function storeUserSession(
   profile: UserProfile,
   token?: string,
@@ -181,43 +243,18 @@ export async function storeUserSession(
     await saveRegisteredUser(updatedProfile);
 
     let activeToken = token;
-    if (!activeToken) {
-      // Try to acquire real server JWT token if available
-      try {
-        const baseUrl = getApiBaseUrl();
-        if (baseUrl) {
-          const res = await fetch(`${baseUrl}/api/auth/login`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              identifier: profile.phone ? normalizePhone(profile.phone) : profile.id,
-              password,
-            }),
-          });
-          if (res.ok) {
-            const data = await res.json();
-            activeToken = data.accessToken;
-          }
-        }
-      } catch {
-        /* server offline or unconfigured during local dev */
+    const isDummy = activeToken && activeToken.endsWith(".sig");
+    if (!activeToken || isDummy) {
+      const serverToken = await ensureServerSession(profile, password);
+      if (serverToken) {
+        activeToken = serverToken;
       }
     }
 
-    if (!activeToken) {
-      const payload = safeBase64Encode(
-        JSON.stringify({
-          sub: profile.id,
-          openId: profile.id,
-          name: profile.name,
-          role: profile.role,
-          appId: "local-app",
-        }),
-      );
-      activeToken = `eyJhbGciOiJIUzI1NiJ9.${payload}.sig`;
+    if (activeToken) {
+      syncPortalToken(activeToken);
+      await setSessionToken(activeToken);
     }
-
-    syncPortalToken(activeToken);
   } catch (error) {
     console.error("Failed to store user session:", error);
   }
@@ -228,6 +265,7 @@ export async function clearUserSession(): Promise<void> {
   try {
     await AsyncStorage.removeItem(USER_PROFILE_KEY);
     removePortalToken();
+    await removeSessionToken();
   } catch (error) {
     console.error("Failed to clear user session:", error);
   }

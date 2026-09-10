@@ -14,7 +14,13 @@ export type User = {
 export async function getSessionToken(): Promise<string | null> {
   try {
     if (Platform.OS === "web") {
-      const token = typeof window !== "undefined" ? window.localStorage.getItem(SESSION_TOKEN_KEY) : null;
+      let token = typeof window !== "undefined" ? window.localStorage.getItem(SESSION_TOKEN_KEY) : null;
+      if (!token && typeof window !== "undefined") {
+        token = window.localStorage.getItem("rural-health-access.portal-token");
+        if (token) {
+          window.localStorage.setItem(SESSION_TOKEN_KEY, token);
+        }
+      }
       console.log(
         "[Auth] Session token retrieved from localStorage:",
         token ? `present (${token.substring(0, 20)}...)` : "missing",
@@ -40,6 +46,7 @@ export async function setSessionToken(token: string): Promise<void> {
     if (Platform.OS === "web") {
       if (typeof window !== "undefined") {
         window.localStorage.setItem(SESSION_TOKEN_KEY, token);
+        window.localStorage.setItem("rural-health-access.portal-token", token);
         console.log("[Auth] Session token stored in localStorage successfully");
       }
       return;
@@ -59,6 +66,7 @@ export async function removeSessionToken(): Promise<void> {
     if (Platform.OS === "web") {
       if (typeof window !== "undefined") {
         window.localStorage.removeItem(SESSION_TOKEN_KEY);
+        window.localStorage.removeItem("rural-health-access.portal-token");
       }
       return;
     }

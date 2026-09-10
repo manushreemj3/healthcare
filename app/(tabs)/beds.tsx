@@ -1,12 +1,10 @@
-import React, { useEffect, useState } from "react";
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView } from "react-native";
-import { useHealth } from "@/lib/health/store";
+import React from "react";
+import { View, Text, StyleSheet } from "react-native";
 import { useUserAuth } from "@/lib/health/DoctorAuthContext";
 import { BedManagementScreen } from "@/components/health/BedManagementScreen";
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 
 export default function BedTrackerScreen() {
-  const health = useHealth();
   const { user, role } = useUserAuth();
   const isChief = role === "chief_doctor";
   const canUpdateBeds = isChief || role === "doctor" || role === "asha_worker";

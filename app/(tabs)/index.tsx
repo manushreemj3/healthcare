@@ -55,7 +55,7 @@ export default function OperationsHome() {
           </View>
           <Pressable
             onPress={() => {
-              const langs: Array<"en" | "hi" | "ta" | "mr"> = ["en", "hi", "ta", "mr"];
+              const langs: ("en" | "hi" | "ta" | "mr")[] = ["en", "hi", "ta", "mr"];
               const next = langs[(langs.indexOf(state.language) + 1) % langs.length];
               setLanguage(next);
             }}

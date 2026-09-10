@@ -2,11 +2,11 @@ import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { FlatList, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useDoctorAuth } from "@/lib/health/DoctorAuthContext";
+import { useUserAuth } from "@/lib/health/DoctorAuthContext";
 import { useChatRealtime } from "@/lib/health/useChatRealtime";
 import { getApiBaseUrl } from "@/constants/oauth";
 import { getSessionToken } from "@/lib/_core/auth";
-import { authorizeSupabaseChat, supabase } from "@/lib/supabase";
+import { ensureServerSession } from "@/lib/health/userAuth";
 import { commonStyles } from "@/components/health/ui";
 
 type Contact = { id: number; name: string; role: string };
@@ -14,7 +14,7 @@ const roleName = (role: string) => role.replaceAll("_", " ").toLowerCase().repla
 const timeName = (timestamp: number) => new Date(timestamp).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 
 export default function ChatScreen() {
-  useDoctorAuth();
+  const { user } = useUserAuth();
   const insets = useSafeAreaInsets();
   const listRef = useRef<FlatList>(null);
   const [contacts, setContacts] = useState<Contact[]>([]);
@@ -25,36 +25,71 @@ export default function ChatScreen() {
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const { messages, loaded, connectionState, error: chatError, send } = useChatRealtime(conversationId, currentUserId);
+  const { messages, loaded, connectionState, error: chatError, send } = useChatRealtime(
+    conversationId,
+    currentUserId && user ? { id: String(currentUserId), name: user.name, role: user.role } : null,
+  );
 
   useEffect(() => {
     let cancelled = false;
     async function load() {
+      setLoading(true);
+      setError(null);
       try {
         const baseUrl = getApiBaseUrl();
-        const token = await getSessionToken();
-        if (!baseUrl || !token) throw new Error("Sign in with a connected account to use chat.");
-        const response = await fetch(`${baseUrl}/api/auth/chat-contacts`, { headers: { Authorization: `Bearer ${token}` } });
+        if (!baseUrl) throw new Error("Healthcare API server is not configured.");
+
+        let token = await getSessionToken();
+        if (!token && user) {
+          token = await ensureServerSession(user);
+        }
+        if (!token) throw new Error("Sign in with a connected account to use chat.");
+
+        const facilityParam = user?.facilityId ? `?facilityId=${encodeURIComponent(user.facilityId)}` : "";
+        let response = await fetch(`${baseUrl}/api/auth/chat-contacts${facilityParam}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+
+        if (!response.ok && response.status === 401 && user) {
+          const refreshed = await ensureServerSession(user);
+          if (refreshed) {
+            token = refreshed;
+            response = await fetch(`${baseUrl}/api/auth/chat-contacts${facilityParam}`, {
+              headers: { Authorization: `Bearer ${token}` },
+            });
+          }
+        }
+
         if (!response.ok) throw new Error("Unable to load healthcare contacts.");
         const data = (await response.json()) as { userId: number; contacts: Contact[] };
-        if (!cancelled) { setCurrentUserId(data.userId); setContacts(data.contacts); }
-      } catch (cause) { if (!cancelled) setError(cause instanceof Error ? cause.message : "Unable to load contacts"); }
-      finally { if (!cancelled) setLoading(false); }
+        if (!cancelled) {
+          setCurrentUserId(data.userId);
+          setContacts(data.contacts);
+        }
+      } catch (cause) {
+        if (!cancelled) setError(cause instanceof Error ? cause.message : "Unable to load contacts");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
     }
     void load();
     return () => { cancelled = true; };
-  }, []);
+  }, [user]);
 
   const openConversation = useCallback(async (contact: Contact) => {
+    if (!currentUserId) {
+      setError("Your chat profile is still loading. Please try again.");
+      return;
+    }
     setBusy(true); setError(null);
     try {
-      await authorizeSupabaseChat();
-      const { data, error: rpcError } = await supabase.rpc("get_or_create_direct_conversation", { target_user_id: contact.id });
-      if (rpcError) throw rpcError;
-      setSelected(contact); setConversationId(data as string);
+      // The stable, sorted channel name gives each staff pair a private thread.
+      const participantIds = [currentUserId, contact.id].sort((a, b) => a - b);
+      setSelected(contact);
+      setConversationId(`direct-${participantIds[0]}-${participantIds[1]}`);
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Unable to open conversation"); }
     finally { setBusy(false); }
-  }, []);
+  }, [currentUserId]);
 
   const sendMessage = useCallback(async () => {
     if (!input.trim() || busy || !conversationId) return;
