@@ -43,7 +43,9 @@ create or replace function public.get_or_create_direct_conversation(target_user_
 returns uuid language plpgsql security definer set search_path = public as $$
 declare
   current_user_id bigint := (auth.jwt() ->> 'app_user_id')::bigint;
+  current_hospital_id bigint := (auth.jwt() ->> 'hospital_id')::bigint;
   current_role text := lower(auth.jwt() ->> 'app_role');
+  target_hospital_id bigint;
   conversation_id uuid;
   worker bigint;
   doctor bigint;
@@ -51,6 +53,15 @@ begin
   if current_user_id is null or target_user_id is null or current_user_id = target_user_id then
     raise exception 'invalid chat participants';
   end if;
+
+  select hospital_id into target_hospital_id
+  from public.users
+  where id = target_user_id;
+
+  if target_hospital_id is null or target_hospital_id <> current_hospital_id then
+    raise exception 'users must be from the same hospital';
+  end if;
+
   if current_role in ('doctor', 'chief_doctor', 'chief_doc') then
     doctor := current_user_id; worker := target_user_id;
   elsif current_role in ('asha_worker', 'receptionist', 'asha') then

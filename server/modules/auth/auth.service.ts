@@ -167,6 +167,7 @@ export class AuthService {
       sub: user.id,
       openId: user.openId,
       role: user.role,
+      hospitalId: user.hospitalId ?? 1,
       appId: process.env.VITE_APP_ID || "local-app",
       name: user.name || user.openId,
     };
@@ -205,16 +206,11 @@ export class AuthService {
           where: { hospitalId: currentUser.hospitalId },
           order: { name: "ASC" },
         })
-      : [...this.localUsers.values()];
-    const isDoctor = ["DOCTOR", "CHIEF_DOCTOR", "doctor", "chief_doc"].includes(currentUser.role);
+      : [...this.localUsers.values()].filter((user) => user.hospitalId === currentUser.hospitalId);
+
     return contacts
       .filter((user) => user.id !== currentUser.id)
-      .filter((user) => {
-        const role = String(user.role);
-        return isDoctor
-          ? ["ASHA_WORKER", "RECEPTIONIST", "asha", "receptionist"].includes(role)
-          : ["DOCTOR", "CHIEF_DOCTOR", "doctor", "chief_doc"].includes(role);
-      })
+      .filter((user) => !["PATIENT"].includes(String(user.role)))
       .map((user) => ({
         id: user.id,
         name: user.name || user.openId,
@@ -236,6 +232,7 @@ export class AuthService {
       role: "authenticated",
       app_user_id: String(user.id),
       app_role: role,
+      hospital_id: user.hospitalId ?? 1,
     })
       .setProtectedHeader({ alg: "HS256", typ: "JWT" })
       .setSubject(subject)
